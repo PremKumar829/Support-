@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: prime-support-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_IDS
+        sync: false
+      - key: SUPPORT_USERNAME
+        sync: false
+      - key: DAILY_EARNING_URL
+        sync: false
+      - key: CHAT_GROUP_URL
+        sync: false
+      - key: FORCE_JOIN_CHANNEL
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
