@@ -1,11 +1,12 @@
 """
 Prime Support Bot
 ------------------
-A PrimeXSupport Telegram support bot: welcome message with buttons,
+A ModularBot-style Telegram support bot: welcome message with buttons,
 a feedback/support inbox that relays messages to admins and lets them
-reply back to the user, broadcast, stats, ban/unban and a small admin
-panel — all backed by SQLite (see database.py) so data survives
-crashes and restarts.
+reply back to the user, broadcast, stats, ban/unban, a small admin
+panel, and optional Telegram Premium animated custom emoji — all
+backed by SQLite (see database.py) so data survives crashes and
+restarts.
 
 Run locally:
     python bot.py
@@ -13,9 +14,9 @@ Run locally:
 Deploy on Render: see README.md
 """
 
+import html
 import logging
 import os
-from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -43,19 +44,58 @@ DAILY_EARNING_URL = os.environ.get("DAILY_EARNING_URL", "")
 CHAT_GROUP_URL = os.environ.get("CHAT_GROUP_URL", "")
 FORCE_JOIN_CHANNEL = os.environ.get("FORCE_JOIN_CHANNEL", "")  # e.g. @yourchannel, blank = disabled
 
-DEFAULT_WELCOME = (
-    "Welcome to Prime X Support! 🚩\n\n"
-    "We are absolutely thrilled to have you join our community.\n\n"
-    "• This is your official hub for all the latest updates, earnings "
-    "information, and dedicated support.\n\n"
-    "• Here is what you can expect from us:\n"
-    "🕐 24 X 7 Assistance: We are always here to help you around the clock.\n\n"
-    "🚀 Fast & Reliable Updates: Stay informed with the newest announcements "
-    "and features.\n\n"
-    "🤝 Dedicated Support: Have a question or need help? Our team is just "
-    "a message away.\n\n"
-    "Please feel free to explore, ask questions, and stay connected."
-)
+# ---------- premium animated custom emoji ----------
+# Telegram lets a bot send *animated* premium custom emoji (Bot API 9.4+),
+# but only if the bot owner has an active Telegram Premium subscription
+# (or the bot has a purchased Fragment username). Without that, Telegram
+# silently falls back to the plain emoji you specify, so this is safe to
+# leave configured either way.
+#
+# Format for CUSTOM_EMOJIS: name:id,name:id,...
+#   e.g. CUSTOM_EMOJIS=fire:5359xxxxxxxxxxxxxx,check:5312xxxxxxxxxxxxxx
+# See README.md for how to obtain a custom_emoji_id.
+def _parse_custom_emojis(raw: str) -> dict:
+    result = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        name, _, emoji_id = pair.partition(":")
+        if name and emoji_id:
+            result[name.strip()] = emoji_id.strip()
+    return result
+
+
+CUSTOM_EMOJIS = _parse_custom_emojis(os.environ.get("CUSTOM_EMOJIS", ""))
+
+
+def ce(name: str, fallback: str) -> str:
+    """Return an HTML tg-emoji tag for a configured premium emoji, or just
+    the plain fallback emoji if that name isn't configured. Always safe to
+    call — output must be sent with parse_mode=ParseMode.HTML."""
+    emoji_id = CUSTOM_EMOJIS.get(name)
+    if not emoji_id:
+        return fallback
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+
+def esc(value) -> str:
+    """HTML-escape any dynamic value (user names, ticket text) before it's
+    interpolated into a parse_mode=HTML message, so stray < > & characters
+    can't break formatting."""
+    return html.escape(str(value))
+
+
+def default_welcome_text() -> str:
+    return (
+        f"{ce('wave', '👋')} <b>Welcome to Prime X Support</b>\n\n"
+        "We're glad to have you here. This is your official channel for "
+        "the latest updates, earnings information, and direct support.\n\n"
+        f"{ce('clock', '🕐')} <b>24/7 Assistance</b> — our team is available around the clock\n"
+        f"{ce('rocket', '🚀')} <b>Fast Updates</b> — announcements and new features, as soon as they land\n"
+        f"{ce('support', '🤝')} <b>Dedicated Support</b> — tap below any time you need help\n\n"
+        "Use the menu below to get started."
+    )
 
 
 def is_owner_or_admin(user_id: int) -> bool:
@@ -66,26 +106,45 @@ def is_owner_or_admin(user_id: int) -> bool:
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     rows = []
-    top_row = []
-    if DAILY_EARNING_URL:
-        top_row.append(InlineKeyboardButton("🔥 Daily Agent Free Earning", url=DAILY_EARNING_URL))
-    if CHAT_GROUP_URL:
-        top_row.append(InlineKeyboardButton("💬 Prime X Chat", url=CHAT_GROUP_URL))
-    if top_row:
+    if DAILY_EARNING_URL or CHAT_GROUP_URL:
+        top_row = []
+        if DAILY_EARNING_URL:
+            top_row.append(InlineKeyboardButton("🔥 Daily Earning", url=DAILY_EARNING_URL, style="success"))
+        if CHAT_GROUP_URL:
+            top_row.append(InlineKeyboardButton("💬 Chat Group", url=CHAT_GROUP_URL, style="primary"))
         rows.append(top_row)
-    rows.append([InlineKeyboardButton("🛠 Contact Support", callback_data="support")])
-    rows.append([InlineKeyboardButton("🎫 My Tickets", callback_data="my_tickets")])
+
+    rows.append(
+        [
+            InlineKeyboardButton("🛠 Support", callback_data="support", style="primary"),
+            InlineKeyboardButton("🎫 My Tickets", callback_data="my_tickets", style="primary"),
+        ]
+    )
+
     if SUPPORT_USERNAME:
-        rows.append([InlineKeyboardButton("👤 Message Admin Directly", url=f"https://t.me/{SUPPORT_USERNAME}")])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "👤 Message Admin Directly", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger"
+                )
+            ]
+        )
+
     return InlineKeyboardMarkup(rows)
 
 
 def admin_panel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")],
-            [InlineKeyboardButton("📨 Broadcast", callback_data="admin_broadcast_help")],
-            [InlineKeyboardButton("✏️ Edit Welcome Message", callback_data="admin_edit_welcome_help")],
+            [
+                InlineKeyboardButton("📊 Stats", callback_data="admin_stats", style="primary"),
+                InlineKeyboardButton("📨 Broadcast", callback_data="admin_broadcast_help", style="danger"),
+            ],
+            [
+                InlineKeyboardButton(
+                    "✏️ Edit Welcome Message", callback_data="admin_edit_welcome_help", style="success"
+                )
+            ],
         ]
     )
 
@@ -112,19 +171,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await user_has_joined(context, user.id):
         join_kb = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_JOIN_CHANNEL.lstrip('@')}")],
-                [InlineKeyboardButton("✅ I've Joined", callback_data="check_join")],
+                [
+                    InlineKeyboardButton(
+                        "📢 Join Channel",
+                        url=f"https://t.me/{FORCE_JOIN_CHANNEL.lstrip('@')}",
+                        style="primary",
+                    )
+                ],
+                [InlineKeyboardButton("✅ I've Joined", callback_data="check_join", style="success")],
             ]
         )
         await update.message.reply_text(
-            "Please join our channel first to use this bot 👇", reply_markup=join_kb
+            "Please join our channel first to use this bot.", reply_markup=join_kb
         )
         return
 
-    welcome = db.get_setting("welcome_message", DEFAULT_WELCOME)
-    name = user.first_name or "there"
+    welcome = db.get_setting("welcome_message") or default_welcome_text()
+    name = esc(user.first_name or "there")
     await update.message.reply_text(
-        f"{name}, {welcome}", reply_markup=main_menu_keyboard(), parse_mode=ParseMode.HTML
+        f"<b>{name}</b>, {welcome}", reply_markup=main_menu_keyboard(), parse_mode=ParseMode.HTML
     )
 
 
@@ -132,10 +197,12 @@ async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     user_id = query.from_user.id
     if await user_has_joined(context, user_id):
-        await query.answer("Thanks for joining! ✅")
-        welcome = db.get_setting("welcome_message", DEFAULT_WELCOME)
-        name = query.from_user.first_name or "there"
-        await query.message.edit_text(f"{name}, {welcome}", reply_markup=main_menu_keyboard())
+        await query.answer("Thanks for joining!")
+        welcome = db.get_setting("welcome_message") or default_welcome_text()
+        name = esc(query.from_user.first_name or "there")
+        await query.message.edit_text(
+            f"<b>{name}</b>, {welcome}", reply_markup=main_menu_keyboard(), parse_mode=ParseMode.HTML
+        )
     else:
         await query.answer("You haven't joined yet — please join and try again.", show_alert=True)
 
@@ -145,36 +212,41 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     context.user_data["awaiting_feedback"] = True
     await query.message.reply_text(
-        "✍️ Please type your question or issue below and our team will get back to you."
+        f"{ce('pencil', '✍️')} Please describe your question or issue below — our team will respond here shortly.",
+        parse_mode=ParseMode.HTML,
     )
 
 
-STATUS_LABEL = {"open": "🟡 Open — waiting for a reply", "replied": "✅ Replied", "closed": "⚪ Closed"}
+STATUS_LABEL = {
+    "open": "🟡 <b>Open</b> — awaiting a response",
+    "replied": "✅ <b>Replied</b>",
+    "closed": "⚪ <b>Closed</b>",
+}
 
 
-def format_tickets(tickets: list[dict]) -> str:
+def format_tickets(tickets: list) -> str:
     if not tickets:
-        return "You haven't raised any support tickets yet. Tap 🛠 Contact Support to open one."
-    lines = ["🎫 Your tickets:\n"]
+        return f"You haven't raised any support tickets yet. Tap {ce('tools', '🛠')} Support to open one."
+    lines = [f"{ce('ticket', '🎫')} <b>Your Support Tickets</b>\n"]
     for t in tickets:
-        lines.append(f"#{t['id']} — {STATUS_LABEL.get(t['status'], t['status'])}")
-        lines.append(f"You: {t['message']}")
+        lines.append(f"#{t['id']} — {STATUS_LABEL.get(t['status'], esc(t['status']))}")
+        lines.append(f"You: {esc(t['message'])}")
         if t.get("admin_reply"):
-            lines.append(f"Support: {t['admin_reply']}")
+            lines.append(f"Support: {esc(t['admin_reply'])}")
         lines.append("")  # blank line between tickets
     return "\n".join(lines).strip()
 
 
 async def myticket_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tickets = db.get_feedback_by_user(update.effective_user.id)
-    await update.message.reply_text(format_tickets(tickets))
+    await update.message.reply_text(format_tickets(tickets), parse_mode=ParseMode.HTML)
 
 
 async def my_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     tickets = db.get_feedback_by_user(query.from_user.id)
-    await query.message.reply_text(format_tickets(tickets))
+    await query.message.reply_text(format_tickets(tickets), parse_mode=ParseMode.HTML)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -195,15 +267,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_user_id = reply_ctx["user_id"]
         fid = reply_ctx["fid"]
         try:
-            await context.bot.send_message(target_user_id, "💬 Support team reply:")
+            await context.bot.send_message(
+                target_user_id, f"{ce('chat', '💬')} <b>Support team reply</b>", parse_mode=ParseMode.HTML
+            )
             await context.bot.copy_message(
                 chat_id=target_user_id, from_chat_id=user.id, message_id=message.message_id
             )
             reply_text = message.text or message.caption or "[non-text reply]"
             db.set_feedback_reply(fid, reply_text)
-            await message.reply_text("✅ Reply sent.")
+            await message.reply_text(f"{ce('check', '✅')} Reply sent.", parse_mode=ParseMode.HTML)
         except Exception as e:
-            await message.reply_text(f"❌ Couldn't deliver reply: {e}")
+            await message.reply_text(f"❌ Couldn't deliver reply: {esc(e)}")
         context.user_data["reply_ticket"] = None
         return
 
@@ -212,26 +286,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_feedback"] = False
         text_for_record = message.text or message.caption or "[non-text message]"
         fid = db.add_feedback(user.id, text_for_record)
-        await message.reply_text("✅ Got it! Our team will reply here soon.")
+        await message.reply_text(
+            f"{ce('check', '✅')} Received — ticket #{fid} has been opened. Our team will reply here soon.",
+            parse_mode=ParseMode.HTML,
+        )
         await notify_admins_of_feedback(context, fid, user, message)
         return
 
     # Fallback: unrecognised free content, outside any flow
     if message.text:
         await message.reply_text(
-            "Use /start to see the menu, or tap 🛠 Contact Support to reach our team."
+            f"Use /start to see the menu, or tap {ce('tools', '🛠')} Support to reach our team.",
+            parse_mode=ParseMode.HTML,
         )
 
 
 async def notify_admins_of_feedback(context: ContextTypes.DEFAULT_TYPE, fid: int, user, message):
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Reply", callback_data=f"reply_{fid}_{user.id}")]])
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Reply", callback_data=f"reply_{fid}_{user.id}", style="danger")]]
+    )
     admin_ids = set(OWNER_IDS) | set(db.list_admins())
     for admin_id in admin_ids:
         try:
             await context.bot.send_message(
                 admin_id,
-                f"📩 New support ticket #{fid}\n"
-                f"From: {user.first_name} (@{user.username or 'no_username'}, id: {user.id})",
+                f"{ce('ticket', '📩')} <b>New support ticket #{fid}</b>\n"
+                f"From: {esc(user.first_name)} (@{esc(user.username or 'no_username')}, id: {user.id})",
+                parse_mode=ParseMode.HTML,
             )
             await context.bot.copy_message(
                 chat_id=admin_id, from_chat_id=user.id, message_id=message.message_id, reply_markup=kb
@@ -253,15 +334,38 @@ async def reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- admin commands ----------
 
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lines = [
+        f"{ce('star', '⭐')} <b>Available Commands</b>\n",
+        "/start — open the main menu",
+        "/myticket — check the status of your support tickets",
+    ]
+    if is_owner_or_admin(user_id):
+        lines += [
+            "",
+            "<b>Admin</b>",
+            "/admin — open the admin panel",
+            "/stats — active / banned users, admin count",
+            "/broadcast <text> — message every user",
+            "/ban <user_id> · /unban <user_id>",
+            "/setwelcome <text> — update the welcome message",
+        ]
+    if user_id in OWNER_IDS:
+        lines.append("/addadmin <user_id> — grant admin access (owner only)")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner_or_admin(update.effective_user.id):
         return
     s = db.get_stats()
     await update.message.reply_text(
-        "📊 Statistics\n\n"
-        f"• Active users: {s['active_users']}\n"
-        f"• Banned users: {s['banned_users']}\n"
-        f"• Administrators: {s['administrators']}"
+        f"{ce('stats', '📊')} <b>Statistics</b>\n\n"
+        f"Active users: {s['active_users']}\n"
+        f"Banned users: {s['banned_users']}\n"
+        f"Administrators: {s['administrators']}",
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -274,14 +378,17 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_ids = db.get_all_user_ids()
     sent, failed = 0, 0
-    status_msg = await update.message.reply_text(f"Broadcasting to {len(user_ids)} users...")
+    status_msg = await update.message.reply_text(f"Broadcasting to {len(user_ids)} users…")
     for uid in user_ids:
         try:
             await context.bot.send_message(uid, text)
             sent += 1
         except Exception:
             failed += 1
-    await status_msg.edit_text(f"✅ Broadcast done. Sent: {sent}, Failed: {failed}")
+    await status_msg.edit_text(
+        f"{ce('check', '✅')} Broadcast complete — sent: {sent}, failed: {failed}.",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -301,7 +408,7 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /unban <user_id>")
         return
     db.unban_user(int(context.args[0]))
-    await update.message.reply_text("✅ User unbanned.")
+    await update.message.reply_text(f"{ce('check', '✅')} User unbanned.", parse_mode=ParseMode.HTML)
 
 
 async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,7 +419,7 @@ async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /addadmin <user_id>")
         return
     db.add_admin(int(context.args[0]))
-    await update.message.reply_text("✅ Admin added.")
+    await update.message.reply_text(f"{ce('check', '✅')} Admin added.", parse_mode=ParseMode.HTML)
 
 
 async def setwelcome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -323,13 +430,15 @@ async def setwelcome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /setwelcome <new welcome text>")
         return
     db.set_setting("welcome_message", text)
-    await update.message.reply_text("✅ Welcome message updated.")
+    await update.message.reply_text(f"{ce('check', '✅')} Welcome message updated.", parse_mode=ParseMode.HTML)
 
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner_or_admin(update.effective_user.id):
         return
-    await update.message.reply_text("⚙️ Admin Panel", reply_markup=admin_panel_keyboard())
+    await update.message.reply_text(
+        f"{ce('gear', '⚙️')} <b>Admin Panel</b>", reply_markup=admin_panel_keyboard(), parse_mode=ParseMode.HTML
+    )
 
 
 async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -341,7 +450,9 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if query.data == "admin_stats":
         s = db.get_stats()
         await query.message.reply_text(
-            f"📊 Active: {s['active_users']} | Banned: {s['banned_users']} | Admins: {s['administrators']}"
+            f"{ce('stats', '📊')} Active: {s['active_users']} | Banned: {s['banned_users']} | "
+            f"Admins: {s['administrators']}",
+            parse_mode=ParseMode.HTML,
         )
     elif query.data == "admin_broadcast_help":
         await query.message.reply_text("Send: /broadcast <your message>")
@@ -358,6 +469,7 @@ def build_app() -> Application:
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
     app.add_handler(CommandHandler("ban", ban_cmd))
