@@ -59,6 +59,11 @@ commit your real token.
    - `FORCE_JOIN_CHANNEL` — optional
    - `WEBHOOK_URL` — set this to your Render URL **after** the first deploy,
      e.g. `https://prime-support-bot.onrender.com`, then save (Render will redeploy)
+   - `PYTHON_VERSION` = `3.12.4` — **important:** without this, Render may pick
+     a very new Python (e.g. 3.14) that `python-telegram-bot` isn't compatible
+     with yet, and the bot crashes on startup with
+     `RuntimeError: There is no current event loop`. Add this manually in the
+     dashboard if your service already exists — it'll trigger a redeploy.
 5. Deploy. Once live, message your bot `/start`.
 
 ## About data persistence (important)
