@@ -12,6 +12,9 @@ restarts.
   forwarded to all admins with a **Reply** button — admin's reply goes
   straight back to the user
 - `/broadcast <text>` — message every user who has started the bot
+- `/myticket` — user checks the status of their own support tickets (open,
+  replied, closed) along with what the admin said, via command or the
+  **🎫 My Tickets** menu button
 - `/stats` — active / banned users, admin count
 - `/ban <id>` / `/unban <id>`
 - `/addadmin <id>` — owner-only
@@ -29,7 +32,7 @@ Message **@BotFather** on Telegram → `/newbot` → copy the token.
 
 ## 2. Push this code to GitHub
 
-\```bash
+```bash
 cd prime-support-bot
 git init
 git add .
@@ -37,34 +40,51 @@ git commit -m "Initial commit"
 git branch -M main
 git remote add origin https://github.com/<your-username>/prime-support-bot.git
 git push -u origin main
-\```
+```
 
 `.env` and `bot_data.db` are already excluded via `.gitignore` — never
 commit your real token.
 
 ## 3. Deploy on Render
 
-1. Go to render.com → **New** → **Web Service**
+1. Go to [render.com](https://render.com) → **New** → **Web Service**
 2. Connect your GitHub repo
 3. Render should auto-detect `render.yaml`. If not, set manually:
    - **Build command:** `pip install -r requirements.txt`
    - **Start command:** `python bot.py`
-4. Under **Environment**, add these (see `.env.example`):
-   - `BOT_TOKEN`, `OWNER_IDS`, `SUPPORT_USERNAME`, `DAILY_EARNING_URL`,
-     `CHAT_GROUP_URL`, `FORCE_JOIN_CHANNEL`
-   - `WEBHOOK_URL` — set this to your Render URL **after** the first deploy
+4. Under **Environment**, add these (see `.env.example` for the full list):
+   - `BOT_TOKEN` — from BotFather
+   - `OWNER_IDS` — your Telegram numeric user ID (get it from **@userinfobot**)
+   - `SUPPORT_USERNAME`, `DAILY_EARNING_URL`, `CHAT_GROUP_URL` — optional, for buttons
+   - `FORCE_JOIN_CHANNEL` — optional
+   - `WEBHOOK_URL` — set this to your Render URL **after** the first deploy,
+     e.g. `https://prime-support-bot.onrender.com`, then save (Render will redeploy)
 5. Deploy. Once live, message your bot `/start`.
 
-## About data persistence
+## About data persistence (important)
 
-- `bot_data.db` survives the bot **crashing or restarting** — same container, disk intact.
-- It does **not** survive a fresh **redeploy** on Render's free plan (clean disk each time).
-- For redeploy-proof persistence, upgrade to a free external DB later — only `database.py` changes.
+- `bot_data.db` lives on the container's disk. It survives the bot
+  **crashing or restarting** — that's the scenario you asked about, and
+  it's covered: Render restarts the same container, disk stays intact,
+  `bot_data.db` is untouched.
+- What it does **not** survive on Render's free plan is a **fresh
+  redeploy** (new commit pushed, manual redeploy) — free-tier containers
+  get a clean disk each time. The bot auto-restores from `backup.json`
+  in that case if the file happens to still be on disk, but a totally
+  new container won't have either file.
+- If you need data to survive redeploys too, the cleanest upgrade path
+  is a free external database (Render's free PostgreSQL, or MongoDB
+  Atlas's free tier) — ping me if you want that wired in; the rest of
+  the bot doesn't need to change, only `database.py`.
 
 ## Local testing
 
-\```bash
+```bash
 cp .env.example .env
+# fill in BOT_TOKEN and OWNER_IDS in .env, leave WEBHOOK_URL blank
 pip install -r requirements.txt
 python bot.py
-\```
+```
+
+With `WEBHOOK_URL` blank, the bot runs in polling mode — good for testing
+on your own machine before you deploy.
