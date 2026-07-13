@@ -23,8 +23,37 @@ restarts.
 - Support messages (both from users and admin replies) are relayed with
   `copy_message`, so premium/custom emoji, stickers, formatting, and
   photos come through exactly as sent instead of being flattened to plain text
+- `/help` — lists available commands, tailored to whether you're an admin
+- Buttons use Telegram's native color styling (Bot API 9.4, Feb 2026) —
+  green for earning/positive actions, blue for neutral actions, red for
+  direct-contact actions. Users on a Telegram app older than Feb 9, 2026
+  will just see plain buttons — the feature gracefully falls back, nothing breaks.
+- Optional support for Telegram Premium **animated custom emoji** in bot
+  messages (welcome message, confirmations, admin panel). Requires the
+  bot owner's account to have an active Telegram Premium subscription —
+  without it, Telegram just shows the plain fallback emoji, so this is
+  safe to leave unconfigured.
 - All data in SQLite (`bot_data.db`) with an auto-refreshed `backup.json`
   restored automatically on boot if the database is ever missing
+
+## Setting up premium animated emoji (optional)
+
+1. Make sure the Telegram account you'll use as bot owner has an active
+   Telegram Premium subscription.
+2. Get the `custom_emoji_id` of any animated emoji from a pack you have
+   access to. The simplest way: forward or send a message containing that
+   custom emoji to an "emoji ID" utility bot (search Telegram for one, e.g.
+   an emoji-id extractor bot) — it will reply with the numeric ID.
+3. In Render's environment variables, set:
+   ```
+   CUSTOM_EMOJIS=fire:5359xxxxxxxxxxxxxx,check:5312xxxxxxxxxxxxxx,rocket:...
+   ```
+   The names on the left (`fire`, `check`, `rocket`, `wave`, `clock`,
+   `support`, `pencil`, `ticket`, `tools`, `star`, `stats`, `gear`, `chat`)
+   correspond to where each emoji is used across the bot's messages — see
+   `bot.py`'s `ce(...)` calls if you want to add more.
+4. Leave any name unset and the bot just uses the plain Unicode emoji
+   instead — nothing breaks either way.
 
 ## 1. Get a bot token
 
