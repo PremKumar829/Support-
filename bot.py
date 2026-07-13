@@ -45,15 +45,6 @@ CHAT_GROUP_URL = os.environ.get("CHAT_GROUP_URL", "")
 FORCE_JOIN_CHANNEL = os.environ.get("FORCE_JOIN_CHANNEL", "")  # e.g. @yourchannel, blank = disabled
 
 # ---------- premium animated custom emoji ----------
-# Telegram lets a bot send *animated* premium custom emoji (Bot API 9.4+),
-# but only if the bot owner has an active Telegram Premium subscription
-# (or the bot has a purchased Fragment username). Without that, Telegram
-# silently falls back to the plain emoji you specify, so this is safe to
-# leave configured either way.
-#
-# Format for CUSTOM_EMOJIS: name:id,name:id,...
-#   e.g. CUSTOM_EMOJIS=fire:5359xxxxxxxxxxxxxx,check:5312xxxxxxxxxxxxxx
-# See README.md for how to obtain a custom_emoji_id.
 def _parse_custom_emojis(raw: str) -> dict:
     result = {}
     for pair in raw.split(","):
@@ -70,9 +61,7 @@ CUSTOM_EMOJIS = _parse_custom_emojis(os.environ.get("CUSTOM_EMOJIS", ""))
 
 
 def ce(name: str, fallback: str) -> str:
-    """Return an HTML tg-emoji tag for a configured premium emoji, or just
-    the plain fallback emoji if that name isn't configured. Always safe to
-    call — output must be sent with parse_mode=ParseMode.HTML."""
+    """Return an HTML tg-emoji tag for a configured premium emoji."""
     emoji_id = CUSTOM_EMOJIS.get(name)
     if not emoji_id:
         return fallback
@@ -80,9 +69,7 @@ def ce(name: str, fallback: str) -> str:
 
 
 def esc(value) -> str:
-    """HTML-escape any dynamic value (user names, ticket text) before it's
-    interpolated into a parse_mode=HTML message, so stray < > & characters
-    can't break formatting."""
+    """HTML-escape dynamic content values."""
     return html.escape(str(value))
 
 
@@ -109,15 +96,15 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     if DAILY_EARNING_URL or CHAT_GROUP_URL:
         top_row = []
         if DAILY_EARNING_URL:
-            top_row.append(InlineKeyboardButton("🔥 Daily Earning", url=DAILY_EARNING_URL, style="success"))
+            top_row.append(InlineKeyboardButton("🔥 Daily Earning", url=DAILY_EARNING_URL, api_kwargs={"style": "success"}))
         if CHAT_GROUP_URL:
-            top_row.append(InlineKeyboardButton("💬 Chat Group", url=CHAT_GROUP_URL, style="primary"))
+            top_row.append(InlineKeyboardButton("💬 Chat Group", url=CHAT_GROUP_URL, api_kwargs={"style": "primary"}))
         rows.append(top_row)
 
     rows.append(
         [
-            InlineKeyboardButton("🛠 Support", callback_data="support", style="primary"),
-            InlineKeyboardButton("🎫 My Tickets", callback_data="my_tickets", style="primary"),
+            InlineKeyboardButton("🛠 Support", callback_data="support", api_kwargs={"style": "primary"}),
+            InlineKeyboardButton("🎫 My Tickets", callback_data="my_tickets", api_kwargs={"style": "primary"}),
         ]
     )
 
@@ -125,7 +112,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    "👤 Message Admin Directly", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger"
+                    "👤 Message Admin Directly", url=f"https://t.me/{SUPPORT_USERNAME}", api_kwargs={"style": "danger"}
                 )
             ]
         )
@@ -137,12 +124,12 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("📊 Stats", callback_data="admin_stats", style="primary"),
-                InlineKeyboardButton("📨 Broadcast", callback_data="admin_broadcast_help", style="danger"),
+                InlineKeyboardButton("📊 Stats", callback_data="admin_stats", api_kwargs={"style": "primary"}),
+                InlineKeyboardButton("📨 Broadcast", callback_data="admin_broadcast_help", api_kwargs={"style": "danger"}),
             ],
             [
                 InlineKeyboardButton(
-                    "✏️ Edit Welcome Message", callback_data="admin_edit_welcome_help", style="success"
+                    "✏️ Edit Welcome Message", callback_data="admin_edit_welcome_help", api_kwargs={"style": "success"}
                 )
             ],
         ]
@@ -159,7 +146,7 @@ async def user_has_joined(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> b
         return member.status not in ("left", "kicked")
     except Exception as e:
         logger.warning("Force-join check failed: %s", e)
-        return True  # fail open so a misconfigured channel doesn't lock everyone out
+        return True
 
 
 # ---------- handlers ----------
@@ -175,10 +162,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton(
                         "📢 Join Channel",
                         url=f"https://t.me/{FORCE_JOIN_CHANNEL.lstrip('@')}",
-                        style="primary",
+                        api_kwargs={"style": "primary"},
                     )
                 ],
-                [InlineKeyboardButton("✅ I've Joined", callback_data="check_join", style="success")],
+                [InlineKeyboardButton("✅ I've Joined", callback_data="check_join", api_kwargs={"style": "success"})],
             ]
         )
         await update.message.reply_text(
@@ -233,7 +220,7 @@ def format_tickets(tickets: list) -> str:
         lines.append(f"You: {esc(t['message'])}")
         if t.get("admin_reply"):
             lines.append(f"Support: {esc(t['admin_reply'])}")
-        lines.append("")  # blank line between tickets
+        lines.append("")
     return "\n".join(lines).strip()
 
 
@@ -250,14 +237,6 @@ async def my_tickets_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles any incoming message (text, premium/custom emoji, stickers,
-    photos, etc.): either a support message from a user, or an admin's
-    reply typed after tapping Reply on a forwarded ticket.
-
-    We use copy_message (not send_message with plain text) so premium
-    custom emoji, formatting, stickers and media come through exactly as
-    the sender sent them — extracting .text would silently strip custom
-    emoji entities."""
     user = update.effective_user
     message = update.message
 
@@ -293,7 +272,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await notify_admins_of_feedback(context, fid, user, message)
         return
 
-    # Fallback: unrecognised free content, outside any flow
     if message.text:
         await message.reply_text(
             f"Use /start to see the menu, or tap {ce('tools', '🛠')} Support to reach our team.",
@@ -303,7 +281,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def notify_admins_of_feedback(context: ContextTypes.DEFAULT_TYPE, fid: int, user, message):
     kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("↩️ Reply", callback_data=f"reply_{fid}_{user.id}", style="danger")]]
+        [
+            [
+                InlineKeyboardButton("↩️ Reply", callback_data=f"reply_{fid}_{user.id}", api_kwargs={"style": "primary"}),
+                InlineKeyboardButton("🗑 Close Ticket", callback_data=f"close_{fid}", api_kwargs={"style": "danger"})
+            ]
+        ]
     )
     admin_ids = set(OWNER_IDS) | set(db.list_admins())
     for admin_id in admin_ids:
@@ -332,6 +315,21 @@ async def reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text(f"Type your reply to ticket #{fid} now:")
 
 
+async def close_ticket_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """New Feature: Allows admins to close tickets directly via callback query button."""
+    query = update.callback_query
+    if not is_owner_or_admin(query.from_user.id):
+        await query.answer("Admins only.", show_alert=True)
+        return
+    _, fid = query.data.split("_")
+    try:
+        db.set_feedback_reply(int(fid), "[Closed by Admin]")
+        await query.answer("Ticket closed successfully.")
+        await query.message.edit_text(f"🗑 <b>Ticket #{fid} has been marked as closed.</b>", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await query.answer(f"Error closing ticket: {e}", show_alert=True)
+
+
 # ---------- admin commands ----------
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -348,7 +346,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/admin — open the admin panel",
             "/stats — active / banned users, admin count",
             "/broadcast <text> — message every user",
+            "/broadcast_admins <text> — message all admins",
             "/ban <user_id> · /unban <user_id>",
+            "/clearbans — unban all users",
             "/setwelcome <text> — update the welcome message",
         ]
     if user_id in OWNER_IDS:
@@ -391,6 +391,25 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def broadcast_admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """New Feature: Broadcast messaging specifically targeting administration group channels and staff IDs."""
+    if not is_owner_or_admin(update.effective_user.id):
+        return
+    text = update.message.text.partition(" ")[2]
+    if not text:
+        await update.message.reply_text("Usage: /broadcast_admins <message>")
+        return
+    admin_ids = set(OWNER_IDS) | set(db.list_admins())
+    sent = 0
+    for aid in admin_ids:
+        try:
+            await context.bot.send_message(aid, f"⚠️ <b>Admin Broadcast:</b>\n\n{text}", parse_mode=ParseMode.HTML)
+            sent += 1
+        except Exception:
+            pass
+    await update.message.reply_text(f"📢 Broadcast sent to {sent} administration channels/accounts.")
+
+
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner_or_admin(update.effective_user.id):
         return
@@ -409,6 +428,20 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     db.unban_user(int(context.args[0]))
     await update.message.reply_text(f"{ce('check', '✅')} User unbanned.", parse_mode=ParseMode.HTML)
+
+
+async def clear_bans_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """New Feature: Unbans all users inside database at once."""
+    if update.effective_user.id not in OWNER_IDS:
+        await update.message.reply_text("Only the owner can wipe the ban list.")
+        return
+    try:
+        user_ids = db.get_all_user_ids()
+        for uid in user_ids:
+            db.unban_user(uid)
+        await update.message.reply_text(f"{ce('check', '✅')} Complete database reset: All users have been unbanned.", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Operation failed: {e}")
 
 
 async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -472,8 +505,10 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
+    app.add_handler(CommandHandler("broadcast_admins", broadcast_admins_cmd))
     app.add_handler(CommandHandler("ban", ban_cmd))
     app.add_handler(CommandHandler("unban", unban_cmd))
+    app.add_handler(CommandHandler("clearbans", clear_bans_cmd))
     app.add_handler(CommandHandler("addadmin", addadmin_cmd))
     app.add_handler(CommandHandler("setwelcome", setwelcome_cmd))
     app.add_handler(CommandHandler("admin", admin_cmd))
@@ -483,6 +518,7 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(support_button, pattern="^support$"))
     app.add_handler(CallbackQueryHandler(my_tickets_callback, pattern="^my_tickets$"))
     app.add_handler(CallbackQueryHandler(reply_button, pattern="^reply_"))
+    app.add_handler(CallbackQueryHandler(close_ticket_callback, pattern="^close_"))
     app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_"))
 
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
@@ -493,7 +529,7 @@ def build_app() -> Application:
 def main():
     app = build_app()
     port = int(os.environ.get("PORT", 8080))
-    webhook_url = os.environ.get("WEBHOOK_URL")  # e.g. https://your-app.onrender.com
+    webhook_url = os.environ.get("WEBHOOK_URL")
 
     if webhook_url:
         logger.info("Starting in webhook mode on port %s", port)
